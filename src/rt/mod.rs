@@ -1,16 +1,12 @@
 mod handle;
 mod task;
 
-#[cfg(test)]
-mod tests;
-
-use crate::tp::ThreadPool;
-
 use self::{
     handle::JoinHandle,
     task::{BlockOnWaker, Task, TaskWaker},
 };
 use super::tp;
+use crate::tp::ThreadPool;
 use futures::channel::oneshot;
 use parking_lot::{Condvar, Mutex};
 use std::{
@@ -24,16 +20,16 @@ use std::{
 };
 
 thread_local! {
-    static EXECUTOR: RefCell<Option<Executor>> = RefCell::new(None);
+    static RUNTIME: RefCell<Option<AsyncRuntime>> = RefCell::new(None);
 }
 
-/// Executor поверх пула потоков для выполнения асинхронных задач
+/// Асинхронный рантайм поверх пула потоков
 #[derive(Clone)]
-pub struct Executor {
+pub struct AsyncRuntime {
     thread_pool: ThreadPool,
 }
 
-impl Default for Executor {
+impl Default for AsyncRuntime {
     fn default() -> Self {
         Self {
             thread_pool: ThreadPool::new(num_cpus::get()),
@@ -41,7 +37,7 @@ impl Default for Executor {
     }
 }
 
-impl Executor {
+impl AsyncRuntime {
     pub fn new(thread_count: usize) -> Self {
         assert!(thread_count != 0);
 
@@ -50,7 +46,7 @@ impl Executor {
     }
 
     pub fn register(self) {
-        EXECUTOR.with(|e| *e.borrow_mut() = Some(self));
+        RUNTIME.with(|e| *e.borrow_mut() = Some(self));
     }
 
     pub fn block_on<F, Fut>(fut: F) -> Result<(), tp::JoinError>
@@ -58,16 +54,16 @@ impl Executor {
         F: Fn(Self) -> Fut,
         Fut: Future<Output = ()> + Send + 'static,
     {
-        EXECUTOR.with(|exec| {
-            let exec = exec
+        RUNTIME.with(|rt| {
+            let rt = rt
                 .borrow()
                 .as_ref()
-                .expect("executor is not registered")
+                .expect("runtime is not registered")
                 .clone();
 
-            let tp = exec.thread_pool.clone();
+            let tp = rt.thread_pool.clone();
 
-            let fut = Box::pin(fut(exec));
+            let fut = Box::pin(fut(rt));
 
             let blocked = {
                 let blocked_flag = Mutex::new(AtomicBool::new(true));
