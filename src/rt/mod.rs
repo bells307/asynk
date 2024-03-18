@@ -1,3 +1,5 @@
+pub mod builder;
+
 mod handle;
 mod task;
 
@@ -6,7 +8,7 @@ use self::{
     task::{BlockOnWaker, Task, TaskWaker},
 };
 use super::tp;
-use crate::tp::ThreadPool;
+use crate::{tp::ThreadPool, AsyncRuntimeBuilder};
 use futures::channel::oneshot;
 use parking_lot::{Condvar, Mutex};
 use std::{
@@ -29,26 +31,32 @@ pub struct AsyncRuntime {
     thread_pool: ThreadPool,
 }
 
-impl Default for AsyncRuntime {
-    fn default() -> Self {
-        Self {
-            thread_pool: ThreadPool::new(num_cpus::get()),
-        }
-    }
-}
-
 impl AsyncRuntime {
-    pub fn new(thread_count: usize) -> Self {
+    pub fn builder() -> AsyncRuntimeBuilder {
+        AsyncRuntimeBuilder::new()
+    }
+
+    fn new(thread_count: usize) -> Self {
         assert!(thread_count != 0);
 
         let thread_pool = ThreadPool::new(thread_count);
         Self { thread_pool }
     }
 
+    /// Зарегистрировать рантайм на текущем потоке
     pub fn register(self) {
-        RUNTIME.with(|e| *e.borrow_mut() = Some(self));
+        RUNTIME.with(|e| {
+            let mut ref_mut = e.borrow_mut();
+
+            if ref_mut.is_some() {
+                panic!("AsyncRuntime is already registered");
+            };
+
+            *ref_mut = Some(self)
+        });
     }
 
+    /// Заблокировать текущий поток до выполнения задачи
     pub fn block_on<F, Fut>(fut: F) -> Result<(), tp::JoinError>
     where
         F: Fn(Self) -> Fut,
@@ -89,6 +97,7 @@ impl AsyncRuntime {
         })
     }
 
+    /// Создать новую асинхронную задачу
     pub fn spawn<T, F, Fut>(&self, fut: F) -> JoinHandle<T>
     where
         T: Send + 'static,

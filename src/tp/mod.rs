@@ -1,4 +1,3 @@
-mod drop_panic;
 mod inner;
 mod queue;
 

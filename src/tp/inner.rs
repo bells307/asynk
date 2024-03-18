@@ -1,5 +1,5 @@
 use super::{queue::JobQueue, JoinError};
-use crate::tp::drop_panic::DropPanic;
+use drop_panic::DropPanic;
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,

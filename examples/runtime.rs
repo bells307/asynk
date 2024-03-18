@@ -3,7 +3,7 @@ use futures_timer::Delay;
 use std::{thread, time::Duration};
 
 fn main() {
-    AsyncRuntime::default().register();
+    AsyncRuntime::builder().build();
 
     AsyncRuntime::block_on(|rt| async move {
         let thr_id = || thread::current().id();
