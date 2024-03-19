@@ -11,6 +11,8 @@ thiserror = "1.0.58"
 futures = "0.3.30"
 num_cpus = "1.16.0"
 drop-panic = { git = "https://github.com/bells307/drop-panic" }
+mio = { version = "0.8.11", features = ["os-poll", "net"] }
+sharded-slab = "0.1.7"
 
 [dev-dependencies]
 futures-timer = "3.0.3"

@@ -10,7 +10,7 @@ impl AsyncRuntimeBuilder {
         Default::default()
     }
 
-    pub fn thread_count(mut self, val: usize) -> Self {
+    pub fn worker_threads(mut self, val: usize) -> Self {
         let val = if val == 0 {
             Self::default_thread_count()
         } else {
