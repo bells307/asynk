@@ -3,22 +3,16 @@ pub mod builder;
 mod handle;
 mod task;
 
-use self::{
-    handle::JoinHandle,
-    task::{BlockOnWaker, Task, TaskWaker},
-};
+use self::{handle::JoinHandle, task::Task};
 use super::tp;
 use crate::{tp::ThreadPool, AsyncRuntimeBuilder};
-use futures::channel::oneshot;
-use parking_lot::{Condvar, Mutex};
+use futures::{channel::oneshot, FutureExt};
 use std::{
     cell::RefCell,
     future::Future,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    task::Wake,
+    sync::Arc,
+    task::{Context, Poll, Wake},
+    thread,
 };
 
 thread_local! {
@@ -69,31 +63,29 @@ impl AsyncRuntime {
                 .expect("runtime is not registered")
                 .clone();
 
-            let tp = rt.thread_pool.clone();
+            let mut jh = rt.spawn(fut);
 
-            let fut = Box::pin(fut(rt));
+            loop {
+                let waker = jh.waker();
+                let mut cx = Context::from_waker(&waker);
 
-            let blocked = {
-                let blocked_flag = Mutex::new(AtomicBool::new(true));
-                let blocked_cv = Condvar::new();
-                Arc::new((blocked_flag, blocked_cv))
-            };
-
-            let task = Task::new(
-                Mutex::new(Some(fut)),
-                tp.clone(),
-                BlockOnWaker::new(blocked.clone()),
-            );
-
-            Arc::new(task).wake();
-
-            let mut lock = blocked.0.lock();
-
-            while lock.load(Ordering::Acquire) {
-                blocked.1.wait(&mut lock);
+                match jh.poll_unpin(&mut cx) {
+                    Poll::Ready(res) => {
+                        // Ошибка возможна в случае, если JoinHandle был дропнут ранее, но
+                        // сейчас мы должны быть уверены, что он у нас в скоупе
+                        res.expect("unexpected drop blocked task JoinHandle");
+                        break;
+                    }
+                    Poll::Pending => {
+                        // Временная заглушка в виде yield_now(). В дальнейшем, в случае если
+                        // основной таск еще не закончен, то планируется ненадолго отдавать
+                        // этот поток для обработки событий реактора
+                        thread::yield_now()
+                    }
+                }
             }
 
-            tp.join()
+            rt.thread_pool.join()
         })
     }
 
@@ -107,14 +99,40 @@ impl AsyncRuntime {
         let fut = Box::pin(fut(self.clone()));
         let (res_tx, res_rx) = oneshot::channel();
 
-        let task = Task::new(
-            Mutex::new(Some(fut)),
-            self.thread_pool.clone(),
-            TaskWaker::new(Mutex::new(Some(res_tx))),
-        );
+        let task = Task::new(fut, res_tx, self.clone()).into();
 
-        Arc::new(task).wake();
+        // Сразу же просим задачу начать исполнение
+        Arc::clone(&task).wake();
 
-        JoinHandle::new(res_rx)
+        JoinHandle::new(res_rx, task)
+    }
+
+    /// Запланировать задачу на выполнение
+    fn schedule_task<T>(&self, task: Arc<Task<T>>)
+    where
+        T: Send + 'static,
+    {
+        self.thread_pool.spawn(move || {
+            let mut lock = task.fut.lock();
+            if let Some(mut fut) = lock.take() {
+                let waker = Arc::clone(&task).into();
+                let mut cx = Context::from_waker(&waker);
+                match fut.as_mut().poll(&mut cx) {
+                    Poll::Ready(res) => {
+                        task.res_tx
+                            .lock()
+                            .take()
+                            .expect("task result channel is empty")
+                            .send(res)
+                            .map_err(|_| ())
+                            // Здесь нужно более внимательно изучить, передающей частью владеет
+                            // `JoinHandle`, соответственно, если он дропнется раньше, чем завершится таск,
+                            // то произойдет паника
+                            .expect("task result channel is dropped");
+                    }
+                    Poll::Pending => *lock = Some(fut),
+                };
+            };
+        });
     }
 }
