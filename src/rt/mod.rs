@@ -77,8 +77,8 @@ impl AsyncRuntime {
                         break;
                     }
                     Poll::Pending => {
-                        // Временная заглушка в виде yield_now(). В дальнейшем, в случае если
-                        // основной таск еще не закончен, то планируется ненадолго отдавать
+                        // Временная заглушка в виде yield_now(). В дальнейшем, в случае, если
+                        // основной таск еще не готов, то планируется ненадолго отдавать
                         // этот поток для обработки событий реактора
                         thread::yield_now()
                     }
@@ -112,27 +112,6 @@ impl AsyncRuntime {
     where
         T: Send + 'static,
     {
-        self.thread_pool.spawn(move || {
-            let mut lock = task.fut.lock();
-            if let Some(mut fut) = lock.take() {
-                let waker = Arc::clone(&task).into();
-                let mut cx = Context::from_waker(&waker);
-                match fut.as_mut().poll(&mut cx) {
-                    Poll::Ready(res) => {
-                        task.res_tx
-                            .lock()
-                            .take()
-                            .expect("task result channel is empty")
-                            .send(res)
-                            .map_err(|_| ())
-                            // Здесь нужно более внимательно изучить, передающей частью владеет
-                            // `JoinHandle`, соответственно, если он дропнется раньше, чем завершится таск,
-                            // то произойдет паника
-                            .expect("task result channel is dropped");
-                    }
-                    Poll::Pending => *lock = Some(fut),
-                };
-            };
-        });
+        self.thread_pool.spawn(move || Arc::clone(&task).poll());
     }
 }
