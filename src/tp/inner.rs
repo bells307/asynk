@@ -26,14 +26,13 @@ impl Inner {
         this
     }
 
-    /// Поставить задачу в очередь на исполнение
+    /// Enqueue job
     pub fn spawn(&self, job: impl Fn() + Send + 'static) {
         self.job_queue.add(Box::new(job));
     }
 
     pub fn join(&self) -> Result<(), JoinError> {
-        // Сообщаем очереди о завершении и просим ее разбудить потоки, которые
-        // ожидают появления задач
+        // Notify queue about finish and ask it to wake sleeping threads
         self.job_queue.finish_ntf();
 
         let mut panicked = 0;
@@ -58,12 +57,12 @@ impl Inner {
         let this = Arc::clone(&self);
 
         let jh = thread::spawn(move || {
-            // Создаем объект, который в случае паники потока вызовет функцию восстановления
+            // In case of thread panic that object will call the recovery function
             drop_panic! {
                 Arc::clone(&this).panic_handler()
             };
 
-            // Запуск рабочего цикла
+            // Start working cycle
             Arc::clone(&this).worker_routine()
         });
 
@@ -81,7 +80,7 @@ impl Inner {
         }
     }
 
-    /// Обработка паники рабочего потока
+    /// Working thread panic handling
     fn panic_handler(self: Arc<Self>) {
         let id = thread::current().id();
 
@@ -89,11 +88,11 @@ impl Inner {
             threads.remove(&id);
         };
 
-        // Пересоздаем рабочий поток
+        // Recreate the worker thread
         self.create_worker();
     }
 
-    /// Рабочий цикл воркера
+    /// Thread working cycle
     fn worker_routine(&self) {
         loop {
             let Some(job) = self.job_queue.get_blocked() else {

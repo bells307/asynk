@@ -19,7 +19,7 @@ impl JobQueue {
         }
     }
 
-    /// Добавить задачу в очередь и уведомить ожидающий поток
+    /// Enqueue job and notify sleeping thread
     pub fn add(&self, job: Job) {
         if self.finished.load(Ordering::Acquire) {
             return;
@@ -29,16 +29,16 @@ impl JobQueue {
         self.not_empty.notify_one();
     }
 
-    /// Установить флаг завершения и уведомить спящие потоки
+    /// Set finish flag and wake up sleeping threads
     pub fn finish_ntf(&self) {
         self.finished.store(true, Ordering::Release);
         self.not_empty.notify_all();
     }
 
-    /// Получение следующей задачи из очереди. Если очередь пуста - поток засыпает до
-    /// появления новых элементов.
+    /// Get next task from the queue. If the queue is empty, then thread sleeps until
+    /// adding new elements.
     ///
-    /// Возвращает `None`, если очередь больше не выдаст элементов.
+    /// Return `None` if the queue will not give out elements no more.
     pub fn get_blocked(&self) -> Option<Job> {
         if self.finished.load(Ordering::Acquire) {
             return None;
@@ -47,15 +47,15 @@ impl JobQueue {
         let mut lock = self.queue.lock();
 
         while lock.is_empty() {
-            // Элементов в очереди нет, засыпаем
+            // If there are no elements, then thread is going to sleep
             self.not_empty.wait(&mut lock);
-            // Возможно, нас разбудили потому что пора выходить
+            // Probably, the thread woken up because it's time to return
             if self.finished.load(Ordering::Acquire) {
                 return None;
             }
         }
 
-        // Сейчас мы можем предположить, что в очереди точно есть элементы
+        // Now we can assert that there are definitely elements in the queue
         assert!(!lock.is_empty());
 
         Some(lock.pop_front().expect("there must be prepared job(s)"))

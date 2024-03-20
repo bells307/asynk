@@ -21,9 +21,9 @@ impl AsyncRuntimeBuilder {
         self
     }
 
-    pub fn build(self) {
+    pub fn build(self) -> AsyncRuntime {
         let thread_count = self.thread_count.unwrap_or_else(Self::default_thread_count);
-        AsyncRuntime::new(thread_count).register();
+        AsyncRuntime::new(thread_count)
     }
 
     fn default_thread_count() -> usize {

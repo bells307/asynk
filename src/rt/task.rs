@@ -1,4 +1,3 @@
-use crate::AsyncRuntime;
 use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
@@ -8,11 +7,14 @@ use std::{
     task::{Context, Poll, Wake},
 };
 
+use super::AsyncRuntime;
+
 type TaskFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+type MutexOpt<T> = Mutex<Option<T>>;
 
 pub(crate) struct Task<T> {
-    fut: Mutex<Option<TaskFuture<T>>>,
-    res_tx: Mutex<Option<oneshot::Sender<T>>>,
+    fut: MutexOpt<TaskFuture<T>>,
+    res_tx: MutexOpt<oneshot::Sender<T>>,
     rt: AsyncRuntime,
 }
 
@@ -41,9 +43,8 @@ where
                         .expect("task result channel is empty")
                         .send(res)
                         .map_err(|_| ())
-                        // Здесь нужно более внимательно изучить, передающей частью владеет
-                        // `JoinHandle`, соответственно, если он дропнется раньше, чем завершится таск,
-                        // то произойдет паника
+                        // Here we need to be carefully, `JoinHandle` owns the sender, so if it'll drop
+                        // earlier than task will complete, so it will cause panic.
                         .expect("task result channel is dropped");
                 }
                 Poll::Pending => *lock = Some(fut),

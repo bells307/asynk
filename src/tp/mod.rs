@@ -7,7 +7,7 @@ use std::sync::Arc;
 #[cfg(test)]
 mod tests;
 
-/// Задача для воркера
+/// Job for worker
 pub type Job = Box<dyn Fn() + Send>;
 
 #[derive(Clone)]
@@ -22,7 +22,7 @@ impl ThreadPool {
         self.0.spawn(job)
     }
 
-    pub fn join(self) -> Result<(), JoinError> {
+    pub fn join(&self) -> Result<(), JoinError> {
         self.0.join()
     }
 }

@@ -13,6 +13,7 @@ num_cpus = "1.16.0"
 drop-panic = "0.1.0"
 mio = { version = "0.8.11", features = ["os-poll", "net"] }
 sharded-slab = "0.1.7"
+bitflags = "2.5.0"
 
 [dev-dependencies]
 futures-timer = "3.0.3"

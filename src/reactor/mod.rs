@@ -1,17 +1,22 @@
+mod error;
 mod event;
 
-use self::event::{EventSender, EventSource};
+use self::{
+    error::ReactorError,
+    event::{EventSender, EventSource},
+};
 use futures::channel::mpsc;
 use mio::{event::Source, Events, Interest, Poll, Token};
 use parking_lot::RwLock;
 use sharded_slab::Slab;
 use std::{sync::Arc, time::Duration};
 
+const POLL_EVENTS_TIMEOUT: Duration = Duration::from_micros(100);
+
 #[derive(Clone)]
 pub struct Reactor(Arc<Inner>);
 
 struct Inner {
-    /// Получатели event'ов
     senders: Slab<EventSender>,
     poll: RwLock<Poll>,
     events: RwLock<Events>,
@@ -32,44 +37,56 @@ impl Reactor {
         }))
     }
 
-    pub fn register<S>(&self, mut source: S, interests: Interest) -> EventSource<S>
+    /// Register interested events for the given source
+    pub fn register<S>(
+        &self,
+        mut source: S,
+        interests: Interest,
+    ) -> Result<EventSource<S>, ReactorError>
     where
         S: Source,
     {
         let (tx, rx) = mpsc::unbounded();
 
-        let token = self.0.senders.insert(tx).unwrap();
+        let token = self
+            .0
+            .senders
+            .insert(tx)
+            .ok_or(ReactorError::SlabQueueFull)?;
+
         let token = Token(token);
 
         self.0
             .poll
             .read()
             .registry()
-            .register(&mut source, token, interests)
-            .unwrap();
+            .register(&mut source, token, interests)?;
 
-        EventSource::new(self.clone(), token, rx, source)
+        Ok(EventSource::new(self.clone(), token, rx, source))
     }
 
-    pub fn poll_events(&self) {
+    pub fn poll_events(&self) -> Result<(), ReactorError> {
         let mut poll = self.0.poll.write();
         let mut events = self.0.events.write();
 
-        poll.poll(&mut events, Some(Duration::from_micros(100)))
-            .unwrap();
+        poll.poll(&mut events, Some(POLL_EVENTS_TIMEOUT))?;
 
         for event in events.into_iter() {
             if let Some(tx) = self.0.senders.get(event.token().into()) {
                 tx.unbounded_send(event.into()).unwrap();
             }
         }
+
+        Ok(())
     }
 
-    fn deregister<S>(&self, token: Token, source: &mut S)
+    /// Remove the interests for the given source
+    fn deregister<S>(&self, token: Token, source: &mut S) -> Result<(), ReactorError>
     where
         S: Source,
     {
-        self.0.poll.read().registry().deregister(source).unwrap();
+        self.0.poll.read().registry().deregister(source)?;
         self.0.senders.get(token.0);
+        Ok(())
     }
 }
