@@ -1,0 +1,55 @@
+{
+  // Use IntelliSense to learn about possible attributes.
+  // Hover to view descriptions of existing attributes.
+  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in library 'async-runtime'",
+      "cargo": {
+        "args": ["test", "--no-run", "--lib", "--package=async-runtime"],
+        "filter": {
+          "name": "async-runtime",
+          "kind": "lib"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug example 'runtime'",
+      "cargo": {
+        "args": ["build", "--example=runtime", "--package=async-runtime"],
+        "filter": {
+          "name": "runtime",
+          "kind": "example"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Debug unit tests in example 'runtime'",
+      "cargo": {
+        "args": [
+          "test",
+          "--no-run",
+          "--example=runtime",
+          "--package=async-runtime"
+        ],
+        "filter": {
+          "name": "runtime",
+          "kind": "example"
+        }
+      },
+      "args": [],
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

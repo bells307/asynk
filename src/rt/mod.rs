@@ -102,7 +102,7 @@ impl AsyncRuntime {
         let task = Task::new(fut, res_tx, self.clone()).into();
 
         // Сразу же просим задачу начать исполнение
-        Arc::clone(&task).wake();
+        self.schedule_task(Arc::clone(&task));
 
         JoinHandle::new(res_rx, task)
     }
