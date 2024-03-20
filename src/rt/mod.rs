@@ -5,24 +5,27 @@ mod task;
 
 use self::{handle::JoinHandle, task::Task};
 use super::tp;
-use crate::{tp::ThreadPool, AsyncRuntimeBuilder};
+use crate::{reactor::Reactor, tp::ThreadPool, AsyncRuntimeBuilder};
 use futures::{channel::oneshot, FutureExt};
+use parking_lot::Mutex;
 use std::{
     cell::RefCell,
     future::Future,
     sync::Arc,
-    task::{Context, Poll, Wake},
-    thread,
+    task::{Context, Poll},
 };
 
 thread_local! {
-    static RUNTIME: RefCell<Option<AsyncRuntime>> = RefCell::new(None);
+    static RUNTIME: RefCell<Mutex<Option<AsyncRuntime>>> = RefCell::new(Mutex::new(None));
 }
 
 /// Асинхронный рантайм поверх пула потоков
 #[derive(Clone)]
-pub struct AsyncRuntime {
+pub struct AsyncRuntime(Arc<Inner>);
+
+struct Inner {
     thread_pool: ThreadPool,
+    reactor: Reactor,
 }
 
 impl AsyncRuntime {
@@ -34,19 +37,25 @@ impl AsyncRuntime {
         assert!(thread_count != 0);
 
         let thread_pool = ThreadPool::new(thread_count);
-        Self { thread_pool }
+        let reactor = Reactor::new();
+
+        Self(Arc::new(Inner {
+            thread_pool,
+            reactor,
+        }))
     }
 
     /// Зарегистрировать рантайм на текущем потоке
     pub fn register(self) {
-        RUNTIME.with(|e| {
-            let mut ref_mut = e.borrow_mut();
+        RUNTIME.with(|rt| {
+            let borrow = rt.borrow();
+            let mut rt = borrow.lock();
 
-            if ref_mut.is_some() {
+            if rt.is_some() {
                 panic!("AsyncRuntime is already registered");
             };
 
-            *ref_mut = Some(self)
+            *rt = Some(self)
         });
     }
 
@@ -59,9 +68,9 @@ impl AsyncRuntime {
         RUNTIME.with(|rt| {
             let rt = rt
                 .borrow()
-                .as_ref()
-                .expect("runtime is not registered")
-                .clone();
+                .lock()
+                .take()
+                .expect("runtime is not registered");
 
             let mut jh = rt.spawn(fut);
 
@@ -77,15 +86,13 @@ impl AsyncRuntime {
                         break;
                     }
                     Poll::Pending => {
-                        // Временная заглушка в виде yield_now(). В дальнейшем, в случае, если
-                        // основной таск еще не готов, то планируется ненадолго отдавать
-                        // этот поток для обработки событий реактора
-                        thread::yield_now()
+                        // Пока главному потоку нечего делать, отдадим его на чтение событий реактором
+                        rt.0.reactor.poll_events();
                     }
                 }
             }
 
-            rt.thread_pool.join()
+            rt.0.thread_pool.clone().join()
         })
     }
 
@@ -107,11 +114,15 @@ impl AsyncRuntime {
         JoinHandle::new(res_rx, task)
     }
 
+    pub fn reactor(&self) -> &Reactor {
+        &self.0.reactor
+    }
+
     /// Запланировать задачу на выполнение
     fn schedule_task<T>(&self, task: Arc<Task<T>>)
     where
         T: Send + 'static,
     {
-        self.thread_pool.spawn(move || Arc::clone(&task).poll());
+        self.0.thread_pool.spawn(move || Arc::clone(&task).poll());
     }
 }

@@ -37,7 +37,8 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "drop-panic"
 version = "0.1.0"
-source = "git+https://github.com/bells307/drop-panic#797dbbd05c1d4df00467db13cf2bd7ed876f4370"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ed93efe83a865fa8a868d9fc9be14bfd8390ab1143b2aadcbd444dfdf6c7d1c"
 
 [[package]]
 name = "futures"

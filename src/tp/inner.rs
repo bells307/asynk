@@ -1,5 +1,5 @@
 use super::{queue::JobQueue, JoinError};
-use drop_panic::DropPanic;
+use drop_panic::drop_panic;
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
@@ -59,7 +59,10 @@ impl Inner {
 
         let jh = thread::spawn(move || {
             // Создаем объект, который в случае паники потока вызовет функцию восстановления
-            let _dp = DropPanic::new(|| Arc::clone(&this).panic_handler());
+            drop_panic! {
+                Arc::clone(&this).panic_handler()
+            };
+
             // Запуск рабочего цикла
             Arc::clone(&this).worker_routine()
         });
