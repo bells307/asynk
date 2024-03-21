@@ -5,11 +5,14 @@ mod task;
 
 use self::{handle::JoinHandle, task::Task};
 use crate::{reactor::Reactor, tp::ThreadPool};
-use futures::{channel::oneshot, FutureExt};
+use futures::channel::oneshot;
+use parking_lot::Mutex;
 use std::{
     future::Future,
-    sync::Arc,
-    task::{Context, Poll},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 /// Asynchronous runtime on top of the thread pool
@@ -39,23 +42,24 @@ impl AsyncRuntime {
     where
         F: Future<Output = ()> + Send + 'static,
     {
-        let mut jh = self.spawn(fut);
+        let completed = Arc::new(AtomicBool::new(false));
+
+        // When the main task becomes `Ready`, than we set complete flag as true
+        let ready_fn = {
+            let completed = Arc::clone(&completed);
+            move |_| {
+                completed.store(true, Ordering::Release);
+            }
+        };
+
+        self.spawn(fut, ready_fn);
 
         loop {
-            let waker = jh.waker();
-            let mut cx = Context::from_waker(&waker);
-
-            match jh.poll_unpin(&mut cx) {
-                Poll::Ready(res) => {
-                    // The error is possible only when JoinHandle dropped earlier, but now
-                    // we must be sure that we have the handle in scope
-                    res.expect("unexpected drop blocked task JoinHandle");
-                    break;
-                }
-                Poll::Pending => {
-                    // While the main thread has nothing to do, let’s give it to read reactor events
-                    self.0.reactor.poll_events().unwrap();
-                }
+            if completed.load(Ordering::Acquire) {
+                break;
+            } else {
+                //  While the main thread has nothing to do, let’s give it to read reactor events
+                self.0.reactor.poll_events().unwrap();
             }
         }
 
@@ -66,20 +70,43 @@ impl AsyncRuntime {
     }
 
     /// Create new async task
-    pub(crate) fn spawn<T, F>(&self, fut: F) -> JoinHandle<T>
+    pub(crate) fn spawn_task<T, F>(&self, fut: F) -> JoinHandle<T>
+    where
+        T: Send + 'static,
+        F: Future<Output = T> + Send + 'static,
+    {
+        let (res_tx, res_rx) = oneshot::channel();
+
+        let res_tx = Mutex::new(Some(res_tx));
+        let ready_fn = move |res| {
+            res_tx
+                .lock()
+                .take()
+                .expect("task result channel is empty")
+                .send(res)
+                .map_err(|_| ())
+                // Here we need to be carefully, `JoinHandle` owns the sender, so if it'll drop
+                // earlier than task will complete, so it will cause panic.
+                .expect("task result channel is dropped");
+        };
+
+        let task = self.spawn(fut, ready_fn);
+        JoinHandle::new(res_rx, task)
+    }
+
+    fn spawn<T, F>(&self, fut: F, ready_fn: impl Fn(T) + Send + Sync + 'static) -> Arc<Task<T>>
     where
         T: Send + 'static,
         F: Future<Output = T> + Send + 'static,
     {
         let fut = Box::pin(fut);
-        let (res_tx, res_rx) = oneshot::channel();
 
-        let task = Task::new(fut, res_tx, self.clone()).into();
+        let task = Task::new(fut, self.clone(), ready_fn).into();
 
         // Immediately ask the task to begin execution
         self.schedule_task(Arc::clone(&task));
 
-        JoinHandle::new(res_rx, task)
+        task
     }
 
     pub(crate) fn reactor(&self) -> &Reactor {

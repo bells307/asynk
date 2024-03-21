@@ -1,4 +1,3 @@
-use futures::channel::oneshot;
 use parking_lot::Mutex;
 use std::{
     future::Future,
@@ -14,19 +13,23 @@ type MutexOpt<T> = Mutex<Option<T>>;
 
 pub(crate) struct Task<T> {
     fut: MutexOpt<TaskFuture<T>>,
-    res_tx: MutexOpt<oneshot::Sender<T>>,
     rt: AsyncRuntime,
+    ready_fn: Box<dyn Fn(T) + Send + Sync + 'static>,
 }
 
 impl<T> Task<T>
 where
     T: Send + 'static,
 {
-    pub(crate) fn new(fut: TaskFuture<T>, res_tx: oneshot::Sender<T>, rt: AsyncRuntime) -> Self {
+    pub(crate) fn new(
+        fut: TaskFuture<T>,
+        rt: AsyncRuntime,
+        ready_fn: impl Fn(T) + Send + Sync + 'static,
+    ) -> Self {
         Self {
             fut: Mutex::new(Some(fut)),
-            res_tx: Mutex::new(Some(res_tx)),
             rt,
+            ready_fn: Box::new(ready_fn),
         }
     }
 
@@ -36,17 +39,7 @@ where
             let waker = Arc::clone(&self).into();
             let mut cx = Context::from_waker(&waker);
             match fut.as_mut().poll(&mut cx) {
-                Poll::Ready(res) => {
-                    self.res_tx
-                        .lock()
-                        .take()
-                        .expect("task result channel is empty")
-                        .send(res)
-                        .map_err(|_| ())
-                        // Here we need to be carefully, `JoinHandle` owns the sender, so if it'll drop
-                        // earlier than task will complete, so it will cause panic.
-                        .expect("task result channel is dropped");
-                }
+                Poll::Ready(res) => (self.ready_fn)(res),
                 Poll::Pending => *lock = Some(fut),
             };
         };

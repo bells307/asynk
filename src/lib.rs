@@ -39,7 +39,7 @@ where
     T: Send + 'static,
     F: Future<Output = T> + Send + 'static,
 {
-    runtime().spawn(fut)
+    runtime().spawn_task(fut)
 }
 
 impl AsyncRuntime {

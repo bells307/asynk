@@ -1,26 +1,34 @@
+use futures::{future, lock::Mutex};
 use futures_timer::Delay;
-use std::{thread, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 
 fn main() {
     asynk::builder().build().register();
+    asynk::block_on(main_future());
+}
 
-    asynk::block_on(async move {
-        let thr_id = || thread::current().id();
+async fn main_future() {
+    let val = Arc::new(Mutex::new(AtomicU32::new(0)));
+    let expected_val = 10_000;
 
-        println!("start main task, thread: {:?}", thr_id());
+    let handles = (0..expected_val)
+        .map(|_| Arc::clone(&val))
+        .map(|val| {
+            asynk::spawn(async move {
+                // some computations ...
+                Delay::new(Duration::from_secs(1)).await;
+                val.lock().await.fetch_add(1, Ordering::SeqCst);
+            })
+        })
+        .collect::<Vec<_>>();
 
-        let jh = asynk::spawn(async move {
-            println!("start spawned task, thread: {:?}", thr_id());
-            Delay::new(Duration::from_secs(3)).await;
-            println!("stop spawned task, thread: {:?}", thr_id());
-            1
-        });
+    future::join_all(handles).await;
 
-        Delay::new(Duration::from_secs(1)).await;
-
-        println!("stop main task, thread: {:?}", thr_id());
-
-        let val = jh.await.unwrap();
-        println!("spawned task returned: {}, thread: {:?}", val, thr_id());
-    });
+    assert_eq!(val.lock().await.load(Ordering::SeqCst), expected_val);
 }
