@@ -84,17 +84,17 @@ impl AsyncRuntime {
                 .take()
                 .expect("task result channel is empty")
                 .send(res)
-                .map_err(|_| ())
-                // Here we need to be carefully, `JoinHandle` owns the sender, so if it'll drop
-                // earlier than task will complete, so it will cause panic.
-                .expect("task result channel is dropped");
+                // If sending caused an error, it means that `JoinHandle` was dropped before
+                // await'ing him. That's okay, ignore this error.
+                .ok();
         };
 
-        let task = self.spawn(fut, ready_fn);
-        JoinHandle::new(res_rx, task)
+        self.spawn(fut, ready_fn);
+
+        JoinHandle::new(res_rx)
     }
 
-    fn spawn<T, F>(&self, fut: F, ready_fn: impl Fn(T) + Send + Sync + 'static) -> Arc<Task<T>>
+    fn spawn<T, F>(&self, fut: F, ready_fn: impl Fn(T) + Send + Sync + 'static)
     where
         T: Send + 'static,
         F: Future<Output = T> + Send + 'static,
@@ -104,9 +104,7 @@ impl AsyncRuntime {
         let task = Task::new(fut, self.clone(), ready_fn).into();
 
         // Immediately ask the task to begin execution
-        self.schedule_task(Arc::clone(&task));
-
-        task
+        self.schedule_task(task);
     }
 
     pub(crate) fn reactor(&self) -> &Reactor {
