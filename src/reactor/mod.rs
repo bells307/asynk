@@ -1,17 +1,13 @@
-mod error;
-mod event;
+pub mod event;
 
-use self::{
-    error::ReactorError,
-    event::{EventSender, EventSource},
-};
+use self::event::{EventSender, RegisteredSource};
 use futures::channel::mpsc;
 use mio::{event::Source, Events, Interest, Poll, Token};
 use parking_lot::RwLock;
 use sharded_slab::Slab;
-use std::{sync::Arc, time::Duration};
+use std::{io, sync::Arc, time::Duration};
 
-const POLL_EVENTS_TIMEOUT: Duration = Duration::from_micros(100);
+const POLL_EVENTS_TIMEOUT: Duration = Duration::from_millis(1);
 
 #[derive(Clone)]
 pub struct Reactor(Arc<Inner>);
@@ -38,11 +34,7 @@ impl Reactor {
     }
 
     /// Register interested events for the given source
-    pub fn register<S>(
-        &self,
-        mut source: S,
-        interests: Interest,
-    ) -> Result<EventSource<S>, ReactorError>
+    pub fn register<S>(&self, mut source: S, interests: Interest) -> io::Result<RegisteredSource<S>>
     where
         S: Source,
     {
@@ -52,7 +44,7 @@ impl Reactor {
             .0
             .senders
             .insert(tx)
-            .ok_or(ReactorError::SlabQueueFull)?;
+            .ok_or(io::Error::new(io::ErrorKind::Other, "slab queue is full"))?;
 
         let token = Token(token);
 
@@ -62,10 +54,10 @@ impl Reactor {
             .registry()
             .register(&mut source, token, interests)?;
 
-        Ok(EventSource::new(self.clone(), token, rx, source))
+        Ok(RegisteredSource::new(self.clone(), token, rx, source))
     }
 
-    pub fn poll_events(&self) -> Result<(), ReactorError> {
+    pub fn poll_events(&self) -> io::Result<()> {
         let mut poll = self.0.poll.write();
         let mut events = self.0.events.write();
 
@@ -73,6 +65,7 @@ impl Reactor {
 
         for event in events.into_iter() {
             if let Some(tx) = self.0.senders.get(event.token().into()) {
+                println!("got new event for {:?}", event.token());
                 tx.unbounded_send(event.into()).unwrap();
             }
         }
@@ -81,7 +74,7 @@ impl Reactor {
     }
 
     /// Remove the interests for the given source
-    fn deregister<S>(&self, token: Token, source: &mut S) -> Result<(), ReactorError>
+    fn deregister<S>(&self, token: Token, source: &mut S) -> io::Result<()>
     where
         S: Source,
     {

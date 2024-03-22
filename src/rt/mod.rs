@@ -25,6 +25,10 @@ struct Inner {
 }
 
 impl AsyncRuntime {
+    pub fn reactor(&self) -> &Reactor {
+        &self.0.reactor
+    }
+
     pub(crate) fn new(thread_count: usize) -> Self {
         assert!(thread_count != 0);
 
@@ -105,10 +109,6 @@ impl AsyncRuntime {
 
         // Immediately ask the task to begin execution
         self.schedule_task(task);
-    }
-
-    pub(crate) fn reactor(&self) -> &Reactor {
-        &self.0.reactor
     }
 
     /// Schedule task for polling

@@ -13,6 +13,7 @@ dependencies = [
  "mio",
  "num_cpus",
  "parking_lot",
+ "pin-project-lite",
  "sharded-slab",
  "thiserror",
 ]

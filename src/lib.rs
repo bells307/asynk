@@ -1,3 +1,5 @@
+pub mod net;
+
 mod reactor;
 mod rt;
 mod tp;
@@ -49,7 +51,7 @@ impl AsyncRuntime {
     }
 }
 
-pub(crate) fn reactor() -> &'static Reactor {
+pub(crate) fn reactor_global() -> &'static Reactor {
     runtime().reactor()
 }
 

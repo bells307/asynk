@@ -1,12 +1,19 @@
+use std::{
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    task::{Context, Poll},
+};
+
 use super::Reactor;
 use bitflags::bitflags;
-use futures::channel::mpsc;
+use futures::{channel::mpsc, Stream, StreamExt};
 use mio::{event::Source, Token};
 
 pub type EventSender = mpsc::UnboundedSender<Event>;
 pub type EventReceiver = mpsc::UnboundedReceiver<Event>;
 
 bitflags! {
+    #[derive(Eq, PartialEq)]
     pub struct Event: u8 {
         const READABLE = 1;
         const WRITABLE = 1 << 1;
@@ -36,35 +43,55 @@ impl From<&mio::event::Event> for Event {
     }
 }
 
-pub struct EventSource<S>
+pub struct RegisteredSource<S>
 where
     S: Source,
 {
     reactor: Reactor,
     token: Token,
-    events: EventReceiver,
+    event_recv: EventReceiver,
     source: S,
 }
 
-impl<S> EventSource<S>
+impl<S> RegisteredSource<S>
 where
     S: Source,
 {
-    pub fn new(reactor: Reactor, token: Token, events: EventReceiver, source: S) -> Self {
+    pub fn new(reactor: Reactor, token: Token, event_recv: EventReceiver, source: S) -> Self {
         Self {
             reactor,
             token,
-            events,
+            event_recv,
             source,
         }
     }
 
-    pub fn events_mut(&mut self) -> &mut EventReceiver {
-        &mut self.events
+    pub fn event_recv_mut(&mut self) -> &mut EventReceiver {
+        &mut self.event_recv
     }
 }
 
-impl<S> Drop for EventSource<S>
+impl<S> Deref for RegisteredSource<S>
+where
+    S: Source,
+{
+    type Target = S;
+
+    fn deref(&self) -> &Self::Target {
+        &self.source
+    }
+}
+
+impl<S> DerefMut for RegisteredSource<S>
+where
+    S: Source,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.source
+    }
+}
+
+impl<S> Drop for RegisteredSource<S>
 where
     S: Source,
 {

@@ -1,3 +1,4 @@
+use super::AsyncRuntime;
 use parking_lot::Mutex;
 use std::{
     future::Future,
@@ -6,13 +7,10 @@ use std::{
     task::{Context, Poll, Wake},
 };
 
-use super::AsyncRuntime;
-
 type TaskFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
-type MutexOpt<T> = Mutex<Option<T>>;
 
 pub(crate) struct Task<T> {
-    fut: MutexOpt<TaskFuture<T>>,
+    fut: Mutex<Option<TaskFuture<T>>>,
     rt: AsyncRuntime,
     ready_fn: Box<dyn Fn(T) + Send + Sync + 'static>,
 }
