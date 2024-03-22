@@ -14,8 +14,8 @@ use std::{
 
 pub struct TcpStream {
     source: RegisteredSource<MioTcpStream>,
-    reading: bool,
-    writing: bool,
+    maybe_readable: bool,
+    maybe_writable: bool,
 }
 
 impl TryFrom<MioTcpStream> for TcpStream {
@@ -25,8 +25,8 @@ impl TryFrom<MioTcpStream> for TcpStream {
         let source = reactor_global().register(stream, Interest::READABLE | Interest::WRITABLE)?;
         Ok(Self {
             source,
-            reading: false,
-            writing: false,
+            maybe_readable: false,
+            maybe_writable: false,
         })
     }
 }
@@ -37,11 +37,11 @@ impl AsyncRead for TcpStream {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<Result<usize>> {
-        if mem::replace(&mut self.reading, true) {
+        if mem::replace(&mut self.maybe_readable, true) {
             match self.source.read(buf) {
                 Ok(n) => Poll::Ready(Ok(n)),
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    self.reading = false;
+                    self.maybe_readable = false;
                     Poll::Ready(Ok(0))
                 }
                 Err(err) => Poll::Ready(Err(err)),
@@ -54,15 +54,16 @@ impl AsyncRead for TcpStream {
                             match self.source.read(buf) {
                                 Ok(n) => return Poll::Ready(Ok(n)),
                                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                    self.reading = false;
+                                    self.maybe_readable = false;
                                     return Poll::Ready(Ok(0));
                                 }
                                 Err(err) => return Poll::Ready(Err(err)),
                             }
-                        } else {
-                            // Continue try to get events from socket
-                            continue;
+                        } else if event == Event::WRITABLE {
+                            self.maybe_writable = true;
                         }
+                        // Continue try to get events from socket
+                        continue;
                     }
                     // Events receiver is dropped
                     Poll::Ready(None) => panic!("?"),
@@ -80,11 +81,11 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize>> {
-        if mem::replace(&mut self.writing, true) {
+        if mem::replace(&mut self.maybe_writable, true) {
             match self.source.write(buf) {
                 Ok(n) => Poll::Ready(Ok(n)),
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                    self.writing = false;
+                    self.maybe_writable = false;
                     Poll::Ready(Ok(0))
                 }
                 Err(err) => Poll::Ready(Err(err)),
@@ -97,15 +98,16 @@ impl AsyncWrite for TcpStream {
                             match self.source.write(buf) {
                                 Ok(n) => return Poll::Ready(Ok(n)),
                                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                    self.writing = false;
+                                    self.maybe_writable = false;
                                     return Poll::Ready(Ok(0));
                                 }
                                 Err(err) => return Poll::Ready(Err(err)),
                             }
-                        } else {
-                            // Continue try to get events from socket
-                            continue;
+                        } else if event == Event::READABLE {
+                            self.maybe_readable = true;
                         }
+                        // Continue try to get events from socket
+                        continue;
                     }
                     // Events receiver is dropped
                     Poll::Ready(None) => panic!("?"),
