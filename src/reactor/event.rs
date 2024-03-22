@@ -1,13 +1,8 @@
-use std::{
-    ops::{Deref, DerefMut},
-    pin::Pin,
-    task::{Context, Poll},
-};
-
 use super::Reactor;
 use bitflags::bitflags;
-use futures::{channel::mpsc, Stream, StreamExt};
+use futures::channel::mpsc;
 use mio::{event::Source, Token};
+use std::ops::{Deref, DerefMut};
 
 pub type EventSender = mpsc::UnboundedSender<Event>;
 pub type EventReceiver = mpsc::UnboundedReceiver<Event>;

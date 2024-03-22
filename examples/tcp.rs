@@ -1,5 +1,5 @@
 use asynk::net::tcp::TcpListener;
-use futures::{AsyncReadExt, StreamExt};
+use futures::{AsyncReadExt, AsyncWriteExt, StreamExt};
 
 fn main() {
     asynk::builder().build().register();
@@ -20,4 +20,9 @@ async fn main_future() {
     stream.read_to_end(&mut buf).await.unwrap();
 
     println!("{}", String::from_utf8_lossy(&buf));
+
+    stream
+        .write_all("hello".to_string().as_bytes())
+        .await
+        .unwrap()
 }

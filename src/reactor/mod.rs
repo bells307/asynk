@@ -65,7 +65,6 @@ impl Reactor {
 
         for event in events.into_iter() {
             if let Some(tx) = self.0.senders.get(event.token().into()) {
-                println!("got new event for {:?}", event.token());
                 tx.unbounded_send(event.into()).unwrap();
             }
         }
