@@ -30,6 +30,8 @@ async fn main_future() {
 
         println!("{}", String::from_utf8_lossy(&buf));
 
-        stream.write_all(RESPONSE.as_bytes()).await.unwrap()
+        // stream.write_all(RESPONSE.as_bytes()).await.unwrap();
+
+        // println!("drop connection");
     }
 }

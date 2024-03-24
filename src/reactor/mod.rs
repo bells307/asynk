@@ -1,6 +1,6 @@
 pub mod event;
 
-use self::event::{EventSender, RegisteredSource};
+use self::event::{EventSender, EventSource};
 use futures::channel::mpsc;
 use mio::{event::Source, Events, Interest, Poll, Token};
 use parking_lot::RwLock;
@@ -34,7 +34,7 @@ impl Reactor {
     }
 
     /// Register interested events for the given source
-    pub fn register<S>(&self, mut source: S, interests: Interest) -> io::Result<RegisteredSource<S>>
+    pub fn register<S>(&self, mut source: S, interests: Interest) -> io::Result<EventSource<S>>
     where
         S: Source,
     {
@@ -43,7 +43,7 @@ impl Reactor {
         let token = self
             .0
             .senders
-            .insert(tx)
+            .insert(tx.clone())
             .ok_or(io::Error::new(io::ErrorKind::Other, "slab queue is full"))?;
 
         let token = Token(token);
@@ -54,7 +54,7 @@ impl Reactor {
             .registry()
             .register(&mut source, token, interests)?;
 
-        Ok(RegisteredSource::new(self.clone(), token, rx, source))
+        Ok(EventSource::new(self.clone(), token, source))
     }
 
     pub fn poll_events(&self) -> io::Result<()> {

@@ -1,14 +1,23 @@
 use super::Reactor;
 use bitflags::bitflags;
-use futures::channel::mpsc;
+use futures::{
+    channel::mpsc::{self, TrySendError},
+    SinkExt, Stream, StreamExt,
+};
 use mio::{event::Source, Token};
-use std::ops::{Deref, DerefMut};
+use std::{
+    collections::HashMap,
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll, Wake, Waker},
+};
 
 pub type EventSender = mpsc::UnboundedSender<Event>;
 pub type EventReceiver = mpsc::UnboundedReceiver<Event>;
 
 bitflags! {
-    #[derive(Eq, PartialEq)]
+    #[derive(Clone, Hash, Eq, PartialEq)]
     pub struct Event: u8 {
         const READABLE = 1;
         const WRITABLE = 1 << 1;
@@ -18,6 +27,16 @@ bitflags! {
         const PRIORITY = 1 << 5;
         const AIO = 1 << 6;
         const LIO = 1 << 7;
+    }
+}
+
+impl Event {
+    pub fn is_readable(&self) -> bool {
+        *self == Event::READABLE
+    }
+
+    pub fn is_writable(&self) -> bool {
+        *self == Event::WRITABLE
     }
 }
 
@@ -38,35 +57,61 @@ impl From<&mio::event::Event> for Event {
     }
 }
 
-pub struct RegisteredSource<S>
+pub struct EventSource<S>
 where
     S: Source,
 {
     reactor: Reactor,
     token: Token,
-    event_recv: EventReceiver,
+    ev_tx: EventSender,
+    ev_rx: EventReceiver,
     source: S,
+    waiters: HashMap<Event, Vec<Waker>>,
 }
 
-impl<S> RegisteredSource<S>
+impl<S> Unpin for EventSource<S> where S: Source {}
+
+impl<S> EventSource<S>
 where
     S: Source,
 {
-    pub fn new(reactor: Reactor, token: Token, event_recv: EventReceiver, source: S) -> Self {
+    pub fn new(reactor: Reactor, token: Token, source: S) -> Self {
+        let (ev_tx, ev_rx) = mpsc::unbounded();
+
         Self {
             reactor,
             token,
-            event_recv,
+            ev_tx,
+            ev_rx,
             source,
+            waiters: HashMap::new(),
         }
     }
 
-    pub fn event_recv_mut(&mut self) -> &mut EventReceiver {
-        &mut self.event_recv
+    pub fn push_event(&self, ev: Event) -> Result<(), TrySendError<Event>> {
+        self.ev_tx.unbounded_send(ev.clone())?;
+        if let Some(waiters) = self.waiters.get(&ev) {
+            for w in waiters {
+                w.wake_by_ref();
+            }
+        }
+
+        Ok(())
     }
 }
 
-impl<S> Deref for RegisteredSource<S>
+impl<S> Stream for EventSource<S>
+where
+    S: Source,
+{
+    type Item = Event;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.ev_rx.poll_next_unpin(cx)
+    }
+}
+
+impl<S> Deref for EventSource<S>
 where
     S: Source,
 {
@@ -77,7 +122,7 @@ where
     }
 }
 
-impl<S> DerefMut for RegisteredSource<S>
+impl<S> DerefMut for EventSource<S>
 where
     S: Source,
 {
@@ -86,7 +131,7 @@ where
     }
 }
 
-impl<S> Drop for RegisteredSource<S>
+impl<S> Drop for EventSource<S>
 where
     S: Source,
 {
