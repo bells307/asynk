@@ -1,11 +1,12 @@
-pub mod event;
-
-use self::event::{EventSender, EventSource};
-use futures::channel::mpsc;
 use mio::{event::Source, Events, Interest, Poll, Token};
 use parking_lot::RwLock;
 use sharded_slab::Slab;
-use std::{io, sync::Arc, time::Duration};
+use std::{
+    io::{self, Error},
+    sync::Arc,
+    task::Waker,
+    time::Duration,
+};
 
 const POLL_EVENTS_TIMEOUT: Duration = Duration::from_millis(1);
 
@@ -13,7 +14,7 @@ const POLL_EVENTS_TIMEOUT: Duration = Duration::from_millis(1);
 pub struct Reactor(Arc<Inner>);
 
 struct Inner {
-    senders: Slab<EventSender>,
+    senders: Slab<Waker>,
     poll: RwLock<Poll>,
     events: RwLock<Events>,
 }
@@ -34,17 +35,20 @@ impl Reactor {
     }
 
     /// Register interested events for the given source
-    pub fn register<S>(&self, mut source: S, interests: Interest) -> io::Result<EventSource<S>>
+    pub fn register<S>(
+        &self,
+        source: &mut S,
+        interests: Interest,
+        waker: Waker,
+    ) -> io::Result<Token>
     where
         S: Source,
     {
-        let (tx, rx) = mpsc::unbounded();
-
         let token = self
             .0
             .senders
-            .insert(tx.clone())
-            .ok_or(io::Error::new(io::ErrorKind::Other, "slab queue is full"))?;
+            .insert(waker)
+            .ok_or(Error::other("slab queue is full"))?;
 
         let token = Token(token);
 
@@ -52,9 +56,37 @@ impl Reactor {
             .poll
             .read()
             .registry()
-            .register(&mut source, token, interests)?;
+            .register(source, token, interests)?;
 
-        Ok(EventSource::new(self.clone(), token, rx, source))
+        Ok(token)
+    }
+
+    pub fn reregister<S>(
+        &self,
+        token: Token,
+        source: &mut S,
+        interests: Interest,
+        waker: Waker,
+    ) -> io::Result<Token>
+    where
+        S: Source,
+    {
+        self.0.senders.remove(token.into());
+
+        let new_token = Token(
+            self.0
+                .senders
+                .insert(waker)
+                .ok_or(Error::other("slab queue is full"))?,
+        );
+
+        self.0
+            .poll
+            .read()
+            .registry()
+            .reregister(source, new_token, interests)?;
+
+        Ok(new_token)
     }
 
     pub fn poll_events(&self) -> io::Result<()> {
@@ -64,18 +96,8 @@ impl Reactor {
         poll.poll(&mut events, Some(POLL_EVENTS_TIMEOUT))?;
 
         for event in events.into_iter() {
-            let ty = if event.is_readable() {
-                "READABLE"
-            } else if event.is_writable() {
-                "WRITABLE"
-            } else {
-                "UNKNOWN"
-            };
-
-            println!("got {ty} event for token {:?}", event.token());
-
-            if let Some(tx) = self.0.senders.get(event.token().into()) {
-                tx.unbounded_send(event.into()).unwrap();
+            if let Some(waker) = self.0.senders.get(event.token().into()) {
+                waker.wake_by_ref();
             }
         }
 
@@ -83,7 +105,7 @@ impl Reactor {
     }
 
     /// Remove the interests for the given source
-    fn deregister<S>(&self, token: Token, source: &mut S) -> io::Result<()>
+    pub fn deregister<S>(&self, token: Token, source: &mut S) -> io::Result<()>
     where
         S: Source,
     {
