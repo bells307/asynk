@@ -35,9 +35,17 @@ where
         &self.source
     }
 
-    pub fn register(&mut self, interest: Interest, waker: Waker) -> Result<()> {
+    pub fn register(&mut self, mut interest: Interest, waker: Waker) -> Result<()> {
         match self.token {
             Some(token) => {
+                if self.waiting_read {
+                    interest |= Interest::READABLE;
+                }
+
+                if self.waiting_write {
+                    interest |= Interest::WRITABLE;
+                }
+
                 reactor_global().reregister(token, &mut self.source, interest, waker)?;
             }
             None => {
@@ -48,11 +56,42 @@ where
 
         Ok(())
     }
+
+    pub fn deregister(&mut self) -> Result<()> {
+        match self.token {
+            Some(token) => {
+                reactor_global().deregister(token, &mut self.source)?;
+                self.token = None;
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
+
+    pub fn deregister_read(&mut self) -> Result<()> {
+        match self.token {
+            Some(token) => {
+                if self.waiting_write {
+                    // reactor_global().reregister(
+                    //     token,
+                    //     &mut self.source,
+                    //     Interest::WRITABLE,
+                    //     waker,
+                    // )?;
+                }
+
+                reactor_global().deregister(token, &mut self.source)?;
+                self.token = None;
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
 }
 
 impl<S> IoHandle<S>
 where
-    S: Source + Read + Write,
+    S: Source + Read,
 {
     pub fn poll_read(
         mut self: Pin<&mut Self>,
@@ -68,19 +107,26 @@ where
         match self.source.read(buf) {
             Ok(n) => {
                 if n == 0 {
+                    self.deregister()?;
                     self.waiting_read = false;
                 }
 
                 Poll::Ready(Ok(n))
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                self.deregister()?;
                 self.waiting_read = false;
                 Poll::Ready(Ok(0))
             }
             Err(e) => Poll::Ready(Err(e)),
         }
     }
+}
 
+impl<S> IoHandle<S>
+where
+    S: Source + Write,
+{
     pub fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -95,6 +141,7 @@ where
         match self.source.write(buf) {
             Ok(n) => {
                 if n == 0 {
+                    self.deregister()?;
                     self.waiting_write = false;
                 }
 
@@ -117,11 +164,12 @@ where
 
         match self.source.flush() {
             Ok(()) => {
+                self.deregister()?;
                 self.waiting_write = false;
-
                 Poll::Ready(Ok(()))
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                self.deregister()?;
                 self.waiting_write = false;
                 Poll::Ready(Ok(()))
             }
@@ -135,10 +183,6 @@ where
     S: Source,
 {
     fn drop(&mut self) {
-        if let Some(token) = self.token {
-            reactor_global()
-                .deregister(token, &mut self.source)
-                .unwrap();
-        }
+        self.deregister().unwrap()
     }
 }
