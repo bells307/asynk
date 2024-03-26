@@ -1,3 +1,5 @@
+pub mod io_handle;
+
 use mio::{event::Source, Events, Interest, Poll, Token};
 use parking_lot::RwLock;
 use sharded_slab::Slab;
@@ -14,7 +16,7 @@ const POLL_EVENTS_TIMEOUT: Duration = Duration::from_millis(1);
 pub struct Reactor(Arc<Inner>);
 
 struct Inner {
-    senders: Slab<Waker>,
+    wakers: Slab<Waker>,
     poll: RwLock<Poll>,
     events: RwLock<Events>,
 }
@@ -30,7 +32,7 @@ impl Reactor {
         Self(Arc::new(Inner {
             poll: RwLock::new(Poll::new().unwrap()),
             events: RwLock::new(Events::with_capacity(128)),
-            senders: Slab::new(),
+            wakers: Slab::new(),
         }))
     }
 
@@ -46,7 +48,7 @@ impl Reactor {
     {
         let token = self
             .0
-            .senders
+            .wakers
             .insert(waker)
             .ok_or(Error::other("slab queue is full"))?;
 
@@ -71,11 +73,11 @@ impl Reactor {
     where
         S: Source,
     {
-        self.0.senders.remove(token.into());
+        self.0.wakers.remove(token.into());
 
         let new_token = Token(
             self.0
-                .senders
+                .wakers
                 .insert(waker)
                 .ok_or(Error::other("slab queue is full"))?,
         );
@@ -96,7 +98,7 @@ impl Reactor {
         poll.poll(&mut events, Some(POLL_EVENTS_TIMEOUT))?;
 
         for event in events.into_iter() {
-            if let Some(waker) = self.0.senders.get(event.token().into()) {
+            if let Some(waker) = self.0.wakers.get(event.token().into()) {
                 waker.wake_by_ref();
             }
         }
@@ -110,7 +112,7 @@ impl Reactor {
         S: Source,
     {
         self.0.poll.read().registry().deregister(source)?;
-        self.0.senders.get(token.0);
+        self.0.wakers.get(token.0);
         Ok(())
     }
 }

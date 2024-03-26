@@ -34,6 +34,8 @@ async fn main_future() {
 
             stream.write_all(RESPONSE.as_bytes()).await.unwrap();
 
+            stream.flush().await.unwrap();
+
             println!("drop connection");
         });
     }
