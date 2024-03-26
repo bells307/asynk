@@ -35,17 +35,9 @@ where
         &self.source
     }
 
-    pub fn register(&mut self, mut interest: Interest, waker: Waker) -> Result<()> {
+    pub fn register(&mut self, interest: Interest, waker: Waker) -> Result<()> {
         match self.token {
             Some(token) => {
-                if self.waiting_read {
-                    interest |= Interest::READABLE;
-                }
-
-                if self.waiting_write {
-                    interest |= Interest::WRITABLE;
-                }
-
                 reactor_global().reregister(token, &mut self.source, interest, waker)?;
             }
             None => {
@@ -60,26 +52,6 @@ where
     pub fn deregister(&mut self) -> Result<()> {
         match self.token {
             Some(token) => {
-                reactor_global().deregister(token, &mut self.source)?;
-                self.token = None;
-                Ok(())
-            }
-            None => Ok(()),
-        }
-    }
-
-    pub fn deregister_read(&mut self) -> Result<()> {
-        match self.token {
-            Some(token) => {
-                if self.waiting_write {
-                    // reactor_global().reregister(
-                    //     token,
-                    //     &mut self.source,
-                    //     Interest::WRITABLE,
-                    //     waker,
-                    // )?;
-                }
-
                 reactor_global().deregister(token, &mut self.source)?;
                 self.token = None;
                 Ok(())
@@ -148,6 +120,7 @@ where
                 Poll::Ready(Ok(n))
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                self.deregister()?;
                 self.waiting_write = false;
                 Poll::Ready(Ok(0))
             }
