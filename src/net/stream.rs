@@ -1,12 +1,8 @@
-use crate::{
-    reactor::event::{Event, EventSource},
-    reactor_global,
-};
-use bitflags::bitflags;
+use crate::{reactor::event::EventSource, reactor_global};
 use futures::{AsyncRead, AsyncWrite, StreamExt};
 use mio::{net::TcpStream as MioTcpStream, Interest};
 use std::{
-    io::{Error, ErrorKind, Read, Result},
+    io::{Error, ErrorKind, Read, Result, Write},
     pin::Pin,
     task::{Context, Poll},
 };
@@ -19,16 +15,18 @@ pub struct TcpStream {
 
 impl TcpStream {
     fn poll_events(mut self: Pin<&mut Self>, cx: &mut Context<'_>) {
-        match self.source.poll_next_unpin(cx) {
-            Poll::Ready(Some(ev)) => {
-                if ev.is_readable() {
-                    self.maybe_readable = true;
-                } else if ev.is_writable() {
-                    self.maybe_writable = true;
+        loop {
+            match self.source.poll_next_unpin(cx) {
+                Poll::Ready(Some(ev)) => {
+                    if ev.is_readable() {
+                        self.maybe_readable = true;
+                    } else if ev.is_writable() {
+                        self.maybe_writable = true;
+                    }
                 }
+                Poll::Ready(None) => panic!("think about it"),
+                Poll::Pending => break,
             }
-            Poll::Ready(None) => panic!("think about it"),
-            Poll::Pending => {}
         }
     }
 }
@@ -54,7 +52,9 @@ impl AsyncRead for TcpStream {
     ) -> Poll<Result<usize>> {
         loop {
             match self.source.read(buf) {
-                Ok(n) => break Poll::Ready(Ok(n)),
+                Ok(n) => {
+                    break Poll::Ready(Ok(n));
+                }
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                     // The socket would block, so we can try to poll events for this socket
                     // and if it becomes readable, then try it again
@@ -65,7 +65,7 @@ impl AsyncRead for TcpStream {
                     if self.maybe_readable {
                         continue;
                     } else {
-                        break Poll::Pending;
+                        break Poll::Ready(Ok(0));
                     }
                 }
                 Err(err) => break Poll::Ready(Err(err)),
@@ -80,7 +80,27 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize>> {
-        todo!()
+        loop {
+            match self.source.write(buf) {
+                Ok(n) => {
+                    break Poll::Ready(Ok(n));
+                }
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    // The socket would block, so we can try to poll events for this socket
+                    // and if it becomes readable, then try it again
+                    self.maybe_writable = false;
+
+                    self.as_mut().poll_events(cx);
+
+                    if self.maybe_writable {
+                        continue;
+                    } else {
+                        break Poll::Ready(Ok(0));
+                    }
+                }
+                Err(err) => break Poll::Ready(Err(err)),
+            }
+        }
     }
 
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<()>> {

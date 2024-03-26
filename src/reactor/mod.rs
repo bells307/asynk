@@ -54,7 +54,7 @@ impl Reactor {
             .registry()
             .register(&mut source, token, interests)?;
 
-        Ok(EventSource::new(self.clone(), token, source))
+        Ok(EventSource::new(self.clone(), token, rx, source))
     }
 
     pub fn poll_events(&self) -> io::Result<()> {
@@ -64,6 +64,16 @@ impl Reactor {
         poll.poll(&mut events, Some(POLL_EVENTS_TIMEOUT))?;
 
         for event in events.into_iter() {
+            let ty = if event.is_readable() {
+                "READABLE"
+            } else if event.is_writable() {
+                "WRITABLE"
+            } else {
+                "UNKNOWN"
+            };
+
+            println!("got {ty} event for token {:?}", event.token());
+
             if let Some(tx) = self.0.senders.get(event.token().into()) {
                 tx.unbounded_send(event.into()).unwrap();
             }

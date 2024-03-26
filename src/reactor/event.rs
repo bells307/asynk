@@ -1,23 +1,18 @@
 use super::Reactor;
 use bitflags::bitflags;
-use futures::{
-    channel::mpsc::{self, TrySendError},
-    SinkExt, Stream, StreamExt,
-};
+use futures::{channel::mpsc, Stream, StreamExt};
 use mio::{event::Source, Token};
 use std::{
-    collections::HashMap,
     ops::{Deref, DerefMut},
     pin::Pin,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
+    task::{Context, Poll},
 };
 
 pub type EventSender = mpsc::UnboundedSender<Event>;
 pub type EventReceiver = mpsc::UnboundedReceiver<Event>;
 
 bitflags! {
-    #[derive(Clone, Hash, Eq, PartialEq)]
+    #[derive(Eq, PartialEq)]
     pub struct Event: u8 {
         const READABLE = 1;
         const WRITABLE = 1 << 1;
@@ -63,10 +58,8 @@ where
 {
     reactor: Reactor,
     token: Token,
-    ev_tx: EventSender,
-    ev_rx: EventReceiver,
+    event_recv: EventReceiver,
     source: S,
-    waiters: HashMap<Event, Vec<Waker>>,
 }
 
 impl<S> Unpin for EventSource<S> where S: Source {}
@@ -75,28 +68,13 @@ impl<S> EventSource<S>
 where
     S: Source,
 {
-    pub fn new(reactor: Reactor, token: Token, source: S) -> Self {
-        let (ev_tx, ev_rx) = mpsc::unbounded();
-
+    pub fn new(reactor: Reactor, token: Token, event_recv: EventReceiver, source: S) -> Self {
         Self {
             reactor,
             token,
-            ev_tx,
-            ev_rx,
+            event_recv,
             source,
-            waiters: HashMap::new(),
         }
-    }
-
-    pub fn push_event(&self, ev: Event) -> Result<(), TrySendError<Event>> {
-        self.ev_tx.unbounded_send(ev.clone())?;
-        if let Some(waiters) = self.waiters.get(&ev) {
-            for w in waiters {
-                w.wake_by_ref();
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -107,7 +85,7 @@ where
     type Item = Event;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.ev_rx.poll_next_unpin(cx)
+        self.event_recv.poll_next_unpin(cx)
     }
 }
 

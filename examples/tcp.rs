@@ -21,17 +21,20 @@ async fn main_future() {
     let mut accept = listener.accept();
 
     while let Some(res) = accept.next().await {
-        let (mut stream, addr) = res.unwrap();
+        asynk::spawn(async move {
+            let (mut stream, addr) = res.unwrap();
 
-        println!("got connection from addr: {}", addr);
+            println!("got connection from addr: {}", addr);
 
-        let mut buf = vec![];
-        stream.read_to_end(&mut buf).await.unwrap();
+            let mut buf = vec![];
 
-        println!("{}", String::from_utf8_lossy(&buf));
+            stream.read_to_end(&mut buf).await.unwrap();
 
-        // stream.write_all(RESPONSE.as_bytes()).await.unwrap();
+            println!("{}", String::from_utf8_lossy(&buf));
 
-        // println!("drop connection");
+            stream.write_all(RESPONSE.as_bytes()).await.unwrap();
+
+            println!("drop connection");
+        });
     }
 }
